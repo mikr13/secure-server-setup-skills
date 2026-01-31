@@ -173,23 +173,17 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 Security practices based on:
 
+- Original Twitter thread by [@brankopetric00](https://x.com/brankopetric00/status/2017283246254436501)
 - Industry standard hardening guidelines
 - OWASP security recommendations
 - Real-world VPS deployment experience
 - CIS Benchmarks for Linux
-- Original Twitter thread by [@brankopetric00](https://x.com/brankopetric00/status/2017283246254436501)
 
 ## ⚠️ Security Notice
 
 These skills implement defense in depth - multiple layers of security working together. No single measure is perfect, but combined they significantly reduce your attack surface.
 
 **Most attackers are lazy.** They're looking for default passwords, unpatched software, and misconfigured services. Make your server slightly harder than the next one, and they'll move on.
-
-## 🆘 Support
-
-- **Issues**: [GitHub Issues](../../issues)
-- **Documentation**: See individual skill `SKILL.md` files
-- **Community**: [Share on Twitter](https://twitter.com/intent/tweet?text=Check%20out%20these%20VPS%20security%20skills)
 
 ---
 
