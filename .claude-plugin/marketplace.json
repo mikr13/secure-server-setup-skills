@@ -1,0 +1,26 @@
+{
+    "name": "secure-server-setup-skills",
+    "owner": {
+        "name": "Mihir Kumar",
+        "email": "hello@mikr13.com"
+    },
+    "metadata": {
+        "description": "A collection of skills to help set up secure servers",
+        "version": "1.0.0"
+    },
+    "plugins": [
+        {
+            "name": "secure-server-skills",
+            "description": "Skills for setting up secure servers with best practices",
+            "source": "./",
+            "strict": false,
+            "skills": [
+                "./secure-server-setup/auto-updates",
+                "./secure-server-setup/ssh-hardening",
+                "./secure-server-setup/firewall-configuration",
+                "./secure-server-setup/fail2ban-setup",
+                "./secure-server-setup/backup-strategy"
+            ]
+        }
+    ]
+}
