@@ -28,13 +28,13 @@ This repository contains [Agent Skills](https://agentskills.io/) for securing Vi
 Install all security skills using the skills CLI:
 
 ```bash
-npx skills add <your-username>/secure-server-skill
+npx skills add mikr13/secure-server-setup-skills
 ```
 
 Or clone manually to your skills directory:
 
 ```bash
-git clone https://github.com/<your-username>/secure-server-skill.git ~/.skills/secure-server
+git clone https://github.com/mikr13/secure-server-setup-skills.git ~/.skills/secure-server
 ```
 
 ### Usage with AI Assistants
