@@ -1,515 +1,66 @@
 ---
 name: backup-strategy
-description: Implement automated backup strategy for VPS servers with regular snapshots, off-server storage, and retention policies to enable quick disaster recovery.
+description: Design and verify Linux backups and recovery. Use for file/database jobs, encryption, retention, S3 transfer and restore tests.
 license: MIT
-compatibility: Ubuntu, Debian, CentOS, RHEL, and most Linux distributions
+compatibility: Linux with Bash, GNU tar/coreutils, gzip and flock; MySQL clients for database backups, GPG for encryption, AWS CLI for S3.
 metadata:
   author: secure-server-skill
   version: "1.0"
   category: disaster-recovery
-allowed-tools: Bash(tar:*, gzip:*, rsync:*, cron:*, aws:*, scp:*)
 ---
 
-# Backup Strategy Skill
+# Backup strategy
 
-Implement automated backup solutions for VPS servers to ensure quick recovery from security incidents or system failures.
+Define recoverable data and recovery objectives before scheduling jobs or deleting generations. A selected-directory archive is not a full machine image; a successful upload or gzip check is not an application restore test.
 
-## What This Skill Does
+## Establish the plan
 
-This skill helps AI agents configure automated backup systems on VPS servers. Security isn't just prevention - it's recovery. If your server gets compromised, you need to rebuild quickly. Regular, off-server backups are essential for business continuity and disaster recovery.
+- Identify required files, application databases, secrets, ownership/ACLs, recovery point and recovery time objectives, retention, encryption key custody, and an independent destination.
+- Arrange database consistency and a schema-stable window. Do not copy live database data files into a generic tar archive and call it consistent.
+- Specify how both file and database artifacts reach remote storage. Use scoped credentials and retention/versioning/immutability appropriate to the incident model; remote storage can still be deleted through compromised credentials.
+- Treat configuration, scheduling, uploads, remote policy changes and retention deletion as distinct authorized actions. Reuse authorization already given for the applicable action; an audit alone does not authorize them.
 
-**Key capabilities:**
+Read [references/backup-locations.md](references/backup-locations.md) for storage decisions, failure handling, schedules and safe restoration.
 
-- Create automated backup scripts
-- Schedule regular backups with cron
-- Implement retention policies (keep N days of backups)
-- Compress and encrypt backup archives
-- Store backups off-server (S3, remote server, etc.)
-- Verify backup integrity
-- Document restoration procedures
+## Create file and database artifacts
 
-## When to Use
+The helpers preview by default, require explicit inputs, create private output and checksum files, serialize jobs in a backup directory, and publish only verified results. Optional GPG encryption uses an already-provisioned public key; failed encryption retains the verified compressed source as a protected pending file.
 
-Use this skill when you need to:
-
-- Set up new server with backup strategy
-- Implement disaster recovery plan
-- Comply with data retention requirements
-- Protect against ransomware and data loss
-- Enable quick server rebuilds
-- Meet business continuity requirements
-
-**Critical understanding:** The backup must NOT be on the same server. If the server is compromised, local backups can be deleted or encrypted by attackers.
-
-## Prerequisites
-
-- Root or sudo access to the server
-- Sufficient disk space for temporary backups
-- Off-server storage solution (S3, remote server, NAS, etc.)
-- Understanding of what needs to be backed up
-- Credentials for remote storage (if applicable)
-
-## What to Back Up
-
-### Critical Directories
+Preview [file backups](scripts/backup-full.sh):
 
 ```bash
-/home                    # User home directories
-/etc                     # System and application configuration
-/var/www                 # Web server content
-/var/lib/mysql           # MySQL databases (if using file-based)
-/root                    # Root user home (if used)
-/opt                     # Optional software installations
-/usr/local               # Locally installed software
+bash scripts/backup-full.sh --path /etc --path /var/www --backup-dir /backup/files --dry-run
 ```
 
-### What NOT to Back Up
+After the data scope and storage are authorized, use `--apply`. Add `--gpg-recipient` for the chosen encryption key. Missing/invalid inputs fail instead of silently excluding required data. GNU tar captures selected-directory metadata; review restore permissions, ACLs and extended attributes on the target.
+
+Preview [MySQL backups](scripts/backup-mysql.sh):
 
 ```bash
-/tmp                     # Temporary files
-/var/tmp                 # Temporary files
-/proc                    # Virtual filesystem
-/sys                     # Virtual filesystem
-/dev                     # Device files
-/run                     # Runtime data
-/var/cache               # Cache files
+bash scripts/backup-mysql.sh --defaults-file /secure/mysql-backup.cnf --database application --backup-dir /backup/mysql --dry-run
 ```
 
-## Basic Backup Script
+The option file must be private and owned by the executing user. No password is passed in argv. Repeat `--database` for every application database. The helper refuses non-InnoDB tables; system databases and other engines need a separately reviewed snapshot/locking procedure. `--apply --maintenance-confirmed` attests the no-concurrent-DDL window. Verify routine/event privileges and successful restoration for the installed database version.
 
-### Simple Tar-Based Backup
+## Transfer and retain
 
-Create `/usr/local/bin/backup.sh`:
+The [S3 helper](scripts/backup-to-s3.sh) takes explicit artifact paths, verifies their adjacent checksums, uploads to the approved prefix, downloads them to compare bytes, then uploads checksums. It retains local copies and changes no bucket lifecycle or credentials.
 
 ```bash
-#!/bin/bash
-#
-# Simple backup script using tar and gzip
-#
-
-# Configuration
-BACKUP_DIR="/backup"
-DATE=$(date +%Y-%m-%d)
-BACKUP_NAME="backup-$DATE.tar.gz"
-RETENTION_DAYS=7
-
-# Create backup directory
-mkdir -p "$BACKUP_DIR"
-
-# Create compressed archive
-echo "Creating backup: $BACKUP_NAME"
-tar -czf "$BACKUP_DIR/$BACKUP_NAME" \
-    --exclude='/backup' \
-    --exclude='/proc' \
-    --exclude='/sys' \
-    --exclude='/dev' \
-    --exclude='/run' \
-    --exclude='/tmp' \
-    --exclude='/var/tmp' \
-    --exclude='/var/cache' \
-    /home \
-    /etc \
-    /var/www \
-    /root \
-    2>/var/log/backup-error.log
-
-# Check if backup was successful
-if [ $? -eq 0 ]; then
-    echo "Backup completed successfully"
-    echo "Backup saved to: $BACKUP_DIR/$BACKUP_NAME"
-else
-    echo "Backup failed! Check /var/log/backup-error.log"
-    exit 1
-fi
-
-# Delete old backups (keep last N days)
-echo "Cleaning up old backups (keeping last $RETENTION_DAYS days)..."
-find "$BACKUP_DIR" -name "backup-*.tar.gz" -mtime +$RETENTION_DAYS -delete
-
-echo "Backup process complete"
+bash scripts/backup-to-s3.sh --s3-uri s3://approved-backups/server-a --file /backup/files/FILE_ARCHIVE --file /backup/mysql/DATABASE_ARCHIVE --dry-run
 ```
 
-Make it executable:
+Substitute the actual generated artifact paths before use. `--apply` performs the upload/readback and incurs transfer/storage costs. Specify `--kms-key-id` only for an approved accessible key; default uploads use S3 AES256 encryption. Uploaded ciphertext still needs independent private-key recovery testing.
 
-```bash
-sudo chmod +x /usr/local/bin/backup.sh
-```
+Local retention is disabled unless `--prune` is explicitly selected. Preview it with `--dry-run --prune --retention-days 30`; `--apply --prune` prunes only after a new successful archive is published. Only regular matching artifacts directly inside the dedicated backup directory, older than the selected age and having valid checksums, qualify. Prior legacy/unverified archives are preserved for manual review. Scope scheduled cleanup to the already-authorized retention policy, and retain enough independent verified generations to meet recovery needs.
 
-## Advanced Backup Strategies
+The helpers share [scripts/backup-common.sh](scripts/backup-common.sh); keep it beside them when copying or installing scripts.
 
-### Database Backups
+## Verify recovery
 
-**MySQL/MariaDB:**
+- Inspect archive contents and checksums, output permissions, job exit status, age, and remote copies. Monitor failures and missing/stale artifacts explicitly.
+- Restore into an isolated directory/database first. Compare required files, metadata and representative application queries; test encrypted restoration using independently stored keys.
+- Restore application data selectively during a reviewed recovery operation. Do not extract `/etc`, `/root`, users or old credentials directly over a running system as a routine test.
+- Configure cron/systemd only after a successful end-to-end run and restore. Define alerting, expected duration, exclusion policy, capacity and required restart coordination.
 
-```bash
-#!/bin/bash
-# MySQL backup script
-
-DB_USER="root"
-DB_PASS="your_password"
-BACKUP_DIR="/backup/mysql"
-DATE=$(date +%Y-%m-%d)
-
-mkdir -p "$BACKUP_DIR"
-
-# Backup all databases
-mysqldump -u"$DB_USER" -p"$DB_PASS" --all-databases \
-    --single-transaction \
-    --quick \
-    --lock-tables=false \
-    > "$BACKUP_DIR/all-databases-$DATE.sql"
-
-# Compress
-gzip "$BACKUP_DIR/all-databases-$DATE.sql"
-
-# Delete old backups
-find "$BACKUP_DIR" -name "all-databases-*.sql.gz" -mtime +7 -delete
-```
-
-**PostgreSQL:**
-
-```bash
-#!/bin/bash
-# PostgreSQL backup script
-
-BACKUP_DIR="/backup/postgresql"
-DATE=$(date +%Y-%m-%d)
-
-mkdir -p "$BACKUP_DIR"
-
-# Backup all databases
-sudo -u postgres pg_dumpall > "$BACKUP_DIR/pg-backup-$DATE.sql"
-
-# Compress
-gzip "$BACKUP_DIR/pg-backup-$DATE.sql"
-
-# Delete old backups
-find "$BACKUP_DIR" -name "pg-backup-*.sql.gz" -mtime +7 -delete
-```
-
-### Incremental Backups with rsync
-
-```bash
-#!/bin/bash
-# Incremental backup using rsync
-
-BACKUP_DIR="/backup/incremental"
-CURRENT="$BACKUP_DIR/current"
-DATE=$(date +%Y-%m-%d-%H%M%S)
-SNAPSHOT="$BACKUP_DIR/$DATE"
-
-# Create backup directory
-mkdir -p "$BACKUP_DIR"
-
-# Perform incremental backup
-rsync -av --delete \
-    --link-dest="$CURRENT" \
-    --exclude='/backup' \
-    --exclude='/proc' \
-    --exclude='/sys' \
-    /home \
-    /etc \
-    /var/www \
-    "$SNAPSHOT"
-
-# Update current symlink
-rm -f "$CURRENT"
-ln -s "$SNAPSHOT" "$CURRENT"
-
-# Keep only last 10 snapshots
-ls -1dt "$BACKUP_DIR"/2* | tail -n +11 | xargs rm -rf
-```
-
-## Off-Server Storage
-
-### AWS S3 Backup
-
-```bash
-#!/bin/bash
-# Backup to AWS S3
-
-BACKUP_DIR="/backup"
-S3_BUCKET="s3://my-backups/server-name"
-DATE=$(date +%Y-%m-%d)
-BACKUP_FILE="backup-$DATE.tar.gz"
-
-# Create backup
-tar -czf "$BACKUP_DIR/$BACKUP_FILE" /home /etc /var/www
-
-# Upload to S3
-aws s3 cp "$BACKUP_DIR/$BACKUP_FILE" "$S3_BUCKET/"
-
-# Verify upload
-if [ $? -eq 0 ]; then
-    echo "Backup uploaded to S3 successfully"
-    # Remove local copy after successful upload
-    rm "$BACKUP_DIR/$BACKUP_FILE"
-else
-    echo "S3 upload failed!"
-    exit 1
-fi
-
-# S3 lifecycle policy handles retention
-```
-
-### SCP to Remote Server
-
-```bash
-#!/bin/bash
-# Backup to remote server via SCP
-
-BACKUP_DIR="/backup"
-REMOTE_USER="backup"
-REMOTE_HOST="backup-server.example.com"
-REMOTE_DIR="/backups/webserver"
-DATE=$(date +%Y-%m-%d)
-BACKUP_FILE="backup-$DATE.tar.gz"
-
-# Create backup
-tar -czf "$BACKUP_DIR/$BACKUP_FILE" /home /etc /var/www
-
-# Upload via SCP (requires SSH key authentication)
-scp "$BACKUP_DIR/$BACKUP_FILE" "$REMOTE_USER@$REMOTE_HOST:$REMOTE_DIR/"
-
-# Verify upload
-if [ $? -eq 0 ]; then
-    echo "Backup transferred successfully"
-    rm "$BACKUP_DIR/$BACKUP_FILE"
-else
-    echo "Transfer failed!"
-    exit 1
-fi
-```
-
-### Encrypted Backups
-
-```bash
-#!/bin/bash
-# Create encrypted backup
-
-BACKUP_DIR="/backup"
-DATE=$(date +%Y-%m-%d)
-BACKUP_FILE="backup-$DATE.tar.gz"
-ENCRYPTED_FILE="backup-$DATE.tar.gz.gpg"
-GPG_RECIPIENT="admin@example.com"
-
-# Create compressed backup
-tar -czf "$BACKUP_DIR/$BACKUP_FILE" /home /etc /var/www
-
-# Encrypt with GPG
-gpg --encrypt --recipient "$GPG_RECIPIENT" \
-    --output "$BACKUP_DIR/$ENCRYPTED_FILE" \
-    "$BACKUP_DIR/$BACKUP_FILE"
-
-# Remove unencrypted version
-rm "$BACKUP_DIR/$BACKUP_FILE"
-
-# Upload encrypted backup (S3, SCP, etc.)
-# ...
-
-echo "Encrypted backup created: $ENCRYPTED_FILE"
-```
-
-## Scheduling Backups with Cron
-
-### Edit Crontab
-
-```bash
-sudo crontab -e
-```
-
-### Common Schedules
-
-```bash
-# Daily at 2 AM
-0 2 * * * /usr/local/bin/backup.sh >> /var/log/backup.log 2>&1
-
-# Weekly on Sunday at 3 AM
-0 3 * * 0 /usr/local/bin/backup.sh
-
-# Daily at 2 AM, keep 30 days
-0 2 * * * /usr/local/bin/backup.sh && find /backup -name "backup-*.tar.gz" -mtime +30 -delete
-
-# Every 6 hours
-0 */6 * * * /usr/local/bin/backup.sh
-
-# Monthly on the 1st at midnight
-0 0 1 * * /usr/local/bin/backup.sh
-```
-
-### Cron with Logging
-
-```bash
-# Daily backup with logging and email on failure
-0 2 * * * /usr/local/bin/backup.sh > /var/log/backup-$(date +\%Y\%m\%d).log 2>&1 || mail -s "Backup Failed" admin@example.com < /var/log/backup-$(date +\%Y\%m\%d).log
-```
-
-## Backup Verification
-
-### Check Backup Integrity
-
-```bash
-#!/bin/bash
-# Verify backup archive integrity
-
-BACKUP_FILE="/backup/backup-2024-01-31.tar.gz"
-
-# Test gzip integrity
-gzip -t "$BACKUP_FILE"
-
-if [ $? -eq 0 ]; then
-    echo "Backup archive is valid"
-else
-    echo "Backup archive is corrupted!"
-    exit 1
-fi
-
-# Test tar contents
-tar -tzf "$BACKUP_FILE" > /dev/null
-
-if [ $? -eq 0 ]; then
-    echo "Tar archive structure is valid"
-else
-    echo "Tar archive has errors!"
-    exit 1
-fi
-```
-
-### List Backup Contents
-
-```bash
-# List files in backup
-tar -tzf /backup/backup-2024-01-31.tar.gz | less
-
-# Search for specific file
-tar -tzf /backup/backup-2024-01-31.tar.gz | grep "config.php"
-```
-
-## Restoration Procedures
-
-### Full System Restore
-
-```bash
-#!/bin/bash
-# Restore from backup
-
-BACKUP_FILE="/backup/backup-2024-01-31.tar.gz"
-
-# WARNING: This will overwrite existing files!
-echo "WARNING: This will restore files and may overwrite existing data!"
-read -p "Continue? (yes/no): " CONFIRM
-
-if [ "$CONFIRM" != "yes" ]; then
-    echo "Aborted"
-    exit 1
-fi
-
-# Extract to root
-cd /
-tar -xzf "$BACKUP_FILE"
-
-echo "Restore complete. Review extracted files and restart services."
-```
-
-### Restore Specific Directory
-
-```bash
-# Restore only /etc
-tar -xzf /backup/backup-2024-01-31.tar.gz -C / etc/
-
-# Restore specific file
-tar -xzf /backup/backup-2024-01-31.tar.gz -C / etc/nginx/nginx.conf
-```
-
-### Restore Database
-
-```bash
-# MySQL restore
-gunzip < /backup/mysql/all-databases-2024-01-31.sql.gz | mysql -uroot -p
-
-# PostgreSQL restore
-gunzip < /backup/postgresql/pg-backup-2024-01-31.sql.gz | sudo -u postgres psql
-```
-
-## Monitoring and Alerting
-
-### Email Notifications
-
-```bash
-#!/bin/bash
-# Backup with email notification
-
-BACKUP_SCRIPT="/usr/local/bin/backup.sh"
-ADMIN_EMAIL="admin@example.com"
-
-# Run backup
-if $BACKUP_SCRIPT; then
-    echo "Backup completed successfully on $(date)" | \
-        mail -s "Backup Success - $(hostname)" "$ADMIN_EMAIL"
-else
-    echo "Backup failed on $(date)" | \
-        mail -s "BACKUP FAILED - $(hostname)" "$ADMIN_EMAIL"
-fi
-```
-
-### Check Last Backup Age
-
-```bash
-#!/bin/bash
-# Alert if backup is too old
-
-BACKUP_DIR="/backup"
-MAX_AGE_HOURS=26  # Alert if no backup in last 26 hours
-
-LATEST_BACKUP=$(find "$BACKUP_DIR" -name "backup-*.tar.gz" -type f -printf '%T@ %p\n' | sort -n | tail -1 | cut -d' ' -f2-)
-
-if [ -z "$LATEST_BACKUP" ]; then
-    echo "No backups found!" | mail -s "BACKUP ALERT" admin@example.com
-    exit 1
-fi
-
-AGE_SECONDS=$(($(date +%s) - $(stat -c %Y "$LATEST_BACKUP")))
-AGE_HOURS=$((AGE_SECONDS / 3600))
-
-if [ $AGE_HOURS -gt $MAX_AGE_HOURS ]; then
-    echo "Last backup is $AGE_HOURS hours old!" | \
-        mail -s "BACKUP TOO OLD" admin@example.com
-fi
-```
-
-## Security Best Practices
-
-1. **Off-server storage** - Never rely solely on local backups
-2. **Encryption** - Encrypt sensitive backups, especially if storing remotely
-3. **Access control** - Restrict backup file permissions (600 or 640)
-4. **Test restores** - Regularly test that backups can be restored
-5. **Monitor backup jobs** - Alert on failures
-6. **Retention policy** - Balance storage costs with recovery needs
-7. **Version backups** - Keep multiple generations
-8. **Document procedures** - Maintain restoration runbooks
-9. **Separate credentials** - Don't store backup credentials on the server being backed up
-
-## Common Mistakes to Avoid
-
-- ❌ Only backing up to the same server (single point of failure)
-- ❌ Not testing restore procedures
-- ❌ Backing up cached/temporary files (waste of space)
-- ❌ Not encrypting backups containing sensitive data
-- ❌ Setting retention too short (can't recover from old issues)
-- ❌ Not monitoring backup success/failure
-- ❌ Including backup directory in backup (infinite loop!)
-- ❌ Not documenting what's backed up and how to restore
-
-## Additional Resources
-
-See [references/backup-locations.md](references/backup-locations.md) for storage provider comparison.
-
-See [scripts/backup-full.sh](scripts/backup-full.sh) for comprehensive backup script.
-
-See [scripts/backup-mysql.sh](scripts/backup-mysql.sh) for database-specific backup.
-
-## Related Skills
-
-- `auto-updates` - Keep backup tools updated
-- `ssh-hardening` - Secure SSH for remote backups
-- `firewall-configuration` - Protect backup storage access
+Report archive validation, remote byte verification, and application recovery as separate outcomes. Avoid deleting useful generations after failed dumps, encryption, transfer, or restore checks.
