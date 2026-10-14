@@ -5,7 +5,7 @@ license: MIT
 compatibility: Ubuntu/Debian Linux with OpenSSH, Python 3, Bash, coreutils, and systemd for activation; local SSH client for access tests.
 metadata:
   author: secure-server-skill
-  version: "1.0"
+  version: "2.0.0"
   category: security
 ---
 

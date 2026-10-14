@@ -5,7 +5,7 @@ license: MIT
 compatibility: Ubuntu/Debian Linux with UFW, OpenSSH, iproute2, Python 3, Bash, and systemd; root for configuration.
 metadata:
   author: secure-server-skill
-  version: "1.0"
+  version: "2.0.0"
   category: security
 ---
 

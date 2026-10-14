@@ -47,7 +47,37 @@ git clone https://github.com/mikr13/secure-server-setup-skills.git
 cd secure-server-setup-skills
 ```
 
-The repository also includes a [Claude plugin marketplace manifest](.claude-plugin/marketplace.json) listing the same five skills.
+The repository also includes a [Claude plugin marketplace](.claude-plugin/marketplace.json). Its [plugin manifest](.claude-plugin/plugin.json) declares the bundle version and the same five skill paths.
+
+On Claude Code 2.1.275 or later, install the plugin directly:
+
+```text
+/plugin install secure-server-skills --marketplace mikr13/secure-server-setup-skills
+```
+
+## Versions and releases
+
+The working tree declares **2.0.0**. See the [changelog](CHANGELOG.md) for release status and the [v1-to-v2 migration guide](MIGRATING.md) before updating existing automation. Install commands above follow the repository's default branch; they do not select a version from skill metadata.
+
+All five skills ship together under one semantic version:
+
+- **Major** (`2.0.0`): incompatible helper interfaces, requirements, or operational behavior.
+- **Minor** (`2.1.0`): additions that preserve existing supported usage.
+- **Patch** (`2.0.1`): compatible fixes and documentation corrections.
+
+The plugin manifest is the authoritative bundle version. Each skill's `metadata.version` and the marketplace catalog version follow that release number. Skill names and directories stay stable across releases. Metadata labels the files; it does not pin an installation or define an upgrade policy.
+
+Published Git tags identify release snapshots. The retrospective `v1.0.0` tag preserves the original baseline; it does not imply those helpers meet the v2 safety guarantees. To inspect that baseline separately:
+
+```bash
+git clone --branch v1.0.0 --depth 1 \
+  https://github.com/mikr13/secure-server-setup-skills.git \
+  secure-server-setup-skills-v1
+```
+
+This checks out the tagged files in a separate directory. For reproducible use, record the tag's commit SHA and install or copy skills from that checkout. Host-specific update behavior still applies to the resulting installation.
+
+For a release, align the manifest, skill metadata and catalog versions, finalize the changelog date and migration notes, validate skill discovery and packaging, and merge the reviewed changes. Then create an annotated `vMAJOR.MINOR.PATCH` tag at the intended release commit and push that exact tag. Keep unreleased work in branches; create `v2.0.0` only when v2 is ready to publish.
 
 ## Use with an assistant
 
@@ -103,7 +133,7 @@ The helpers accept explicit command-line arguments, expose `--help`, and preview
 
 ### Updating existing jobs
 
-These interfaces replace the former interactive or no-argument runs. Update existing automation to supply the required inputs and `--apply`; otherwise a command either previews or rejects missing inputs. Pruning requires `--prune`, and the database helper requires selected databases and protected credentials. Keep `backup-common.sh` beside the backup scripts. Review existing server configuration separately before adopting new managed overrides.
+Version 2 replaces the former interactive or no-argument runs. Update existing automation to supply the required inputs and `--apply`; otherwise a command either previews or rejects missing inputs. Follow the [migration guide](MIGRATING.md) for each helper, activation choices, backup dependencies, and rollout verification.
 
 ### Current limitations
 
@@ -129,7 +159,10 @@ Shell syntax checks and a running service are useful checks, but neither establi
 
 ```text
 .claude-plugin/
-└── marketplace.json
+├── marketplace.json
+└── plugin.json
+CHANGELOG.md
+MIGRATING.md
 secure-server-setup/
 ├── auto-updates/
 ├── ssh-hardening/

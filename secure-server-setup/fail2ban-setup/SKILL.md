@@ -5,7 +5,7 @@ license: MIT
 compatibility: Ubuntu/Debian Linux with Fail2ban, OpenSSH, iproute2, Bash, systemd, and python3-systemd for journal-only SSH.
 metadata:
   author: secure-server-skill
-  version: "1.0"
+  version: "2.0.0"
   category: security
 ---
 

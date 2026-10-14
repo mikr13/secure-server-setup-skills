@@ -5,7 +5,7 @@ license: MIT
 compatibility: Linux with Bash, GNU tar/coreutils, gzip and flock; MySQL clients for database backups, GPG for encryption, AWS CLI for S3.
 metadata:
   author: secure-server-skill
-  version: "1.0"
+  version: "2.0.0"
   category: disaster-recovery
 ---
 
