@@ -1,314 +1,65 @@
-# SSH Configuration Reference (sshd_config)
+# OpenSSH policy and activation
 
-## Configuration File Locations
+## Effective values and conditional rules
 
-- Main config: `/etc/ssh/sshd_config`
-- Drop-in configs: `/etc/ssh/sshd_config.d/*.conf` (Ubuntu 22.04+)
-- User keys: `~/.ssh/authorized_keys`
-
-## Essential Security Settings
-
-### Authentication Settings
-
-```
-# Enable public key authentication
-PubkeyAuthentication yes
-
-# Disable password authentication
-PasswordAuthentication no
-
-# Disable challenge-response authentication
-ChallengeResponseAuthentication no
-
-# Disable empty passwords
-PermitEmptyPasswords no
-
-# Disable root login
-PermitRootLogin no
-
-# Disable host-based authentication
-HostbasedAuthentication no
-```
-
-### Access Control
-
-```
-# Allow only specific users
-AllowUsers user1 user2 deployer
-
-# Or allow users in specific groups
-AllowGroups sshusers admins
-
-# Deny specific users
-DenyUsers baduser
-
-# Deny specific groups
-DenyGroups nonetwork
-```
-
-### Connection Settings
-
-```
-# Limit authentication attempts
-MaxAuthTries 3
-
-# Maximum concurrent unauthenticated connections
-MaxStartups 10:30:60
-
-# Login grace time (seconds)
-LoginGraceTime 60
-
-# Client alive interval (seconds)
-ClientAliveInterval 300
-ClientAliveCountMax 2
-
-# TCP keep alive
-TCPKeepAlive yes
-```
-
-### Port and Protocol
-
-```
-# Default port (change for obscurity, optional)
-Port 22
-
-# Listen on specific IPs only
-ListenAddress 0.0.0.0
-ListenAddress ::
-
-# Use only protocol 2
-Protocol 2
-```
-
-### Forwarding and Tunneling
-
-```
-# X11 forwarding (disable unless needed)
-X11Forwarding no
-
-# TCP forwarding (disable unless needed)
-AllowTcpForwarding no
-
-# Agent forwarding (disable unless needed)
-AllowAgentForwarding no
-
-# Tunnel devices (disable unless needed)
-PermitTunnel no
-```
-
-### Logging
-
-```
-# Log level
-LogLevel VERBOSE
-
-# Facility
-SyslogFacility AUTH
-
-# Print last login time
-PrintLastLog yes
-
-# Print message of the day
-PrintMotd yes
-```
-
-## Advanced Security Settings
-
-### Key Types
-
-```
-# Allowed host key types
-HostKeyAlgorithms ssh-ed25519,ssh-ed25519-cert-v01@openssh.com,sk-ssh-ed25519@openssh.com,sk-ssh-ed25519-cert-v01@openssh.com,rsa-sha2-512,rsa-sha2-512-cert-v01@openssh.com,rsa-sha2-256,rsa-sha2-256-cert-v01@openssh.com
-
-# Allowed public key types
-PubkeyAcceptedAlgorithms ssh-ed25519,ssh-ed25519-cert-v01@openssh.com,sk-ssh-ed25519@openssh.com,sk-ssh-ed25519-cert-v01@openssh.com,rsa-sha2-512,rsa-sha2-512-cert-v01@openssh.com,rsa-sha2-256,rsa-sha2-256-cert-v01@openssh.com
-```
-
-### Ciphers and MACs
-
-```
-# Strong ciphers only
-Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com,aes256-ctr,aes192-ctr,aes128-ctr
-
-# Strong MACs only
-MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,hmac-sha2-512,hmac-sha2-256
-
-# Strong key exchange algorithms
-KexAlgorithms curve25519-sha256,curve25519-sha256@libssh.org,diffie-hellman-group16-sha512,diffie-hellman-group18-sha512,diffie-hellman-group-exchange-sha256
-```
-
-### PAM and Environment
-
-```
-# Use PAM
-UsePAM yes
-
-# Accept environment variables
-AcceptEnv LANG LC_*
-
-# Print environment
-PermitUserEnvironment no
-```
-
-## Testing Configuration
-
-### Syntax Check
+OpenSSH generally uses the first obtained value for each option, with documented exceptions for accumulating lists. Includes are processed where they occur. An early managed filename helps only when the main file actually includes it before competing settings. Existing `AllowUsers` and `AllowGroups` can accumulate, so adding a new list is not necessarily a replacement restriction.
 
 ```bash
-# Test configuration
 sudo sshd -t
-
-# Test with specific config file
-sudo sshd -t -f /etc/ssh/sshd_config
-
-# Extended test
-sudo sshd -T
+sudo sshd -T -C user=administrator,host=client.example.com,addr=203.0.113.10
+sudo ss -ltnp
+sudo systemctl status ssh.service sshd.service ssh.socket --no-pager
 ```
 
-### View Effective Configuration
+Inspect every relevant user/address/hostname combination affected by `Match`. Test root and required automation accounts as well. `sshd -T` describes the file configuration, not whether the running daemon has loaded it. Socket units or a custom daemon command line may own the actual listener; preserve their configured ports.
 
-```bash
-# Show all effective settings
-sudo sshd -T
+## Key-only policy and MFA
 
-# Show settings for specific user
-sudo sshd -T -C user=deployer
+The conventional helper policy is:
 
-# Show settings with connection info
-sudo sshd -T -C user=deployer,host=example.com,addr=192.168.1.100
-```
-
-## Restart SSH Service
-
-```bash
-# Test first!
-sudo sshd -t
-
-# Restart (Ubuntu/Debian)
-sudo systemctl restart sshd
-
-# Restart (older systems)
-sudo service ssh restart
-
-# Check status
-sudo systemctl status sshd
-```
-
-## Match Blocks
-
-Apply different settings for specific users, groups, or hosts:
-
-```
-# Different settings for specific user
-Match User backupuser
-    PasswordAuthentication yes
-    AllowTcpForwarding no
-
-# Different settings for specific network
-Match Address 192.168.1.0/24
-    PasswordAuthentication yes
-
-# Different settings for specific group
-Match Group contractors
-    X11Forwarding no
-    AllowTcpForwarding no
-    ForceCommand /usr/local/bin/restricted-shell
-```
-
-## Common Configurations
-
-### Maximum Security (Keys Only)
-
-```
-Protocol 2
-Port 22
+```text
 PermitRootLogin no
-PubkeyAuthentication yes
 PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+AuthenticationMethods publickey
 PermitEmptyPasswords no
-ChallengeResponseAuthentication no
-UsePAM yes
-X11Forwarding no
-AllowTcpForwarding no
-AllowAgentForwarding no
-MaxAuthTries 3
-LoginGraceTime 60
-ClientAliveInterval 300
-ClientAliveCountMax 2
-AllowUsers deployer admin
 ```
 
-### Balanced (Some Flexibility)
+Do not apply it over intentional MFA, certificates/SSO or special account requirements without reviewing their authentication flow. `PasswordAuthentication no` alone does not disable a PAM-backed keyboard-interactive password path. Use `KbdInteractiveAuthentication` for current OpenSSH; `ChallengeResponseAuthentication` is an older alias.
 
-```
-Protocol 2
-Port 22
-PermitRootLogin no
-PubkeyAuthentication yes
-PasswordAuthentication no
-ChallengeResponseAuthentication no
-UsePAM yes
-X11Forwarding yes
-AllowTcpForwarding yes
-MaxAuthTries 3
-LoginGraceTime 120
-AllowGroups sshusers
-```
+Remove obsolete `Protocol 2` settings. Prefer the supported distribution's maintained crypto defaults over copied fixed cipher/KEX lists; make policy-specific overrides only after checking clients, FIPS requirements and the installed OpenSSH version.
 
-## Security Checklist
+Keep existing ports and access/forwarding rules unless the requested scope changes them. `ClientAliveInterval` checks responsiveness; it is not a user-idle timeout. Restrict forwarding only when compatible with required tunnels/deployment workflows.
 
-- [ ] Root login disabled
-- [ ] Password authentication disabled
-- [ ] SSH keys configured for all users
-- [ ] AllowUsers or AllowGroups configured
-- [ ] MaxAuthTries set to 3 or less
-- [ ] X11Forwarding disabled (unless needed)
-- [ ] TCP forwarding restricted
-- [ ] Strong ciphers and MACs configured
-- [ ] Fail2ban installed and configured
-- [ ] Firewall limiting SSH access
-- [ ] Regular monitoring of /var/log/auth.log
+## Local keys and explicit login tests
 
-## Monitoring and Logs
-
-### Log Files
+Generate personal keys on the local client, not the server:
 
 ```bash
-# Authentication log (Ubuntu/Debian)
-/var/log/auth.log
-
-# Authentication log (RHEL/CentOS)
-/var/log/secure
-
-# SSH daemon log
-sudo journalctl -u sshd
+ssh-keygen -t ed25519 -f ~/.ssh/server_admin -C server-administration
+ssh-copy-id -i ~/.ssh/server_admin.pub administrator@server.example.com
+ssh -o IdentitiesOnly=yes -o PreferredAuthentications=publickey -i ~/.ssh/server_admin administrator@server.example.com
 ```
 
-### Useful Commands
+Use a passphrase or hardware-backed key where supported. Never overwrite an existing key to satisfy a setup recipe. The helper requires an explicit destination and protects both private/public paths; unattended no-passphrase generation is only an explicit service-key choice. Secure the private key and provision only the public key on the server.
 
-```bash
-# Watch authentication attempts in real-time
-sudo tail -f /var/log/auth.log
+Verify `sudo` from that fresh key session before disabling fallback access. Keep a provider console and the old session during the change.
 
-# Count failed login attempts
-sudo grep "Failed password" /var/log/auth.log | wc -l
+## Validate, activate, reconnect
 
-# Show failed login IPs
-sudo grep "Failed password" /var/log/auth.log | awk '{print $11}' | sort | uniq -c | sort -rn
+Validate syntax and effective policy after staging. Find the actual active unit; reload that unit after authorization rather than assuming every distribution uses `sshd.service`. The helper supports active `ssh.service` or `sshd.service`; custom service/socket arrangements require manual inspection.
 
-# Show successful logins
-sudo grep "Accepted publickey" /var/log/auth.log
+After reload, open a new connection using the selected key, verify sudo and required automation workflows, and test that disabled authentication methods/root access are rejected. Keep the existing connection until these tests pass. A connection before reload tests the old policy only.
 
-# Show last login times
-lastlog
+## Exact rollback
 
-# Show who is currently logged in
-who
-w
-```
+The helper saves the precise managed drop-in it overwrites, not just the main `sshd_config`. On validation or activation failure it restores that file or removes the newly created file when none existed, then attempts a recovery reload if activation was attempted. Its printed rollback directory is private.
 
-## References
+For a later rollback, restore the saved managed file, or remove only the helper's new managed file, validate syntax and effective policy, then reload the actual unit using the console/preserved session. Do not delete unrelated drop-ins or replace the whole SSH configuration.
 
-- [OpenSSH sshd_config man page](https://man.openbsd.org/sshd_config)
-- [Mozilla SSH Configuration Guidelines](https://infosec.mozilla.org/guidelines/openssh)
-- [SSH Hardening Guides](https://www.ssh.com/academy/ssh/sshd_config)
+## Sources
+
+- [OpenSSH sshd_config manual](https://man.openbsd.org/sshd_config)
+- [OpenSSH sshd test modes](https://man.openbsd.org/sshd)
+- [Ubuntu OpenSSH server](https://ubuntu.com/server/docs/how-to/security/openssh-server/)

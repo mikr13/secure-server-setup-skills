@@ -1,105 +1,50 @@
-#!/bin/bash
-#
-# Full Server Backup Script
-# Creates compressed tar archive of critical directories
-#
-
-set -e  # Exit on error
-
-# Configuration
-BACKUP_DIR="/backup"
-DATE=$(date +%Y-%m-%d-%H%M)
-HOSTNAME=$(hostname -s)
-BACKUP_NAME="${HOSTNAME}-backup-${DATE}.tar.gz"
-RETENTION_DAYS=7
-LOG_FILE="/var/log/backup.log"
-
-# Create backup directory
-mkdir -p "$BACKUP_DIR"
-
-# Log function
-log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a "$LOG_FILE"
+#!/usr/bin/env bash
+# Selected-directory archive, not a machine image or live database snapshot.
+set -Eeuo pipefail
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=backup-common.sh
+source "$(dirname -- "${BASH_SOURCE[0]}")/backup-common.sh"
+paths=()
+usage() {
+    cat <<'HELP'
+Usage: backup-full.sh --path /etc [--path /home] [OPTIONS]
+Preview by default. Uses GNU tar, gzip, coreutils and flock on Linux.
+  --path PATH         Repeat for explicitly selected existing directories
+  --backup-dir PATH   Dedicated private directory (default: /backup)
+  --gpg-recipient KEY Encrypt to an already-provisioned GPG public key
+  --apply             Create and verify a new archive
+  --prune             Also prune verified old artifacts after success
+  --retention-days N  Retention age in full 24-hour days (default: 7)
+  --dry-run           Preview archive inputs and retention only (default)
+  --help              Show usage
+Use database-specific backups for live databases. No uploads or scheduling.
+Exit: 0 success/preview, 1 backup/verification failure, 2 invalid input/locked.
+HELP
 }
-
-log "========================================="
-log "Starting backup: $BACKUP_NAME"
-log "========================================="
-
-# Check available disk space
-AVAILABLE_SPACE=$(df "$BACKUP_DIR" | awk 'NR==2 {print $4}')
-if [ "$AVAILABLE_SPACE" -lt 5000000 ]; then
-    log "ERROR: Less than 5GB available space in $BACKUP_DIR"
-    exit 1
+while (($#)); do
+    case $1 in
+        --path) (($# >= 2)) || backup_die '--path needs a value'; paths+=("$2"); shift 2 ;;
+        --help|-h) usage; exit 0 ;;
+        *) if parse_backup_option "$1" "${2:-}"; then shift "$OPTION_COUNT"; else backup_die "Unknown option: $1"; fi ;;
+    esac
+done
+check_backup_options
+((${#paths[@]})) || backup_die 'Choose what to archive with --path (repeatable).'
+relative_paths=()
+for path in "${paths[@]}"; do
+    [[ $path == /* && -d $path ]] || backup_die "Not an existing absolute directory: $path"
+    path=$(realpath -- "$path")
+    case $path in /|/proc|/sys|/dev|/run|/tmp|/var/tmp) backup_die "Not an archive source: $path" ;; esac
+    [[ $BACKUP_DIR != "$path" && $BACKUP_DIR != "$path/"* ]] || backup_die 'Backup directory cannot be inside an archive source.'
+    relative_paths+=("${path#/}")
+done
+printf 'Archive inputs: %s\nBackup directory: %s\n' "${paths[*]}" "$BACKUP_DIR"
+if ! $APPLY; then prune_backups backup; printf 'Preview only; no archive created.\n'; exit 0; fi
+prepare_backup_directory
+pending=$(mktemp "$BACKUP_DIR/.files.pending.XXXXXXXX")
+if ! tar --acls --xattrs --numeric-owner -czf "$pending" -C / -- "${relative_paths[@]}"; then
+    printf 'Archive creation failed; previous backups preserved. Partial output: %s\n' "$pending" >&2; exit 1
 fi
-
-# Create compressed archive
-log "Creating compressed archive..."
-tar -czf "$BACKUP_DIR/$BACKUP_NAME" \
-    --exclude='*.log' \
-    --exclude='*.tmp' \
-    --exclude='/backup' \
-    --exclude='/proc' \
-    --exclude='/sys' \
-    --exclude='/dev' \
-    --exclude='/run' \
-    --exclude='/tmp' \
-    --exclude='/var/tmp' \
-    --exclude='/var/cache' \
-    --exclude='/var/log' \
-    --exclude='lost+found' \
-    /home \
-    /etc \
-    /var/www \
-    /root \
-    /usr/local \
-    /opt \
-    2>>"$LOG_FILE"
-
-# Check if backup was successful
-if [ $? -eq 0 ]; then
-    BACKUP_SIZE=$(du -h "$BACKUP_DIR/$BACKUP_NAME" | cut -f1)
-    log "✓ Backup completed successfully"
-    log "  File: $BACKUP_DIR/$BACKUP_NAME"
-    log "  Size: $BACKUP_SIZE"
-else
-    log "✗ Backup FAILED! Check $LOG_FILE for details"
-    exit 1
-fi
-
-# Verify backup integrity
-log "Verifying backup integrity..."
-if gzip -t "$BACKUP_DIR/$BACKUP_NAME" 2>>"$LOG_FILE"; then
-    log "✓ Backup archive verified successfully"
-else
-    log "✗ Backup archive is CORRUPTED!"
-    exit 1
-fi
-
-# Delete old backups (keep last N days)
-log "Cleaning up old backups (keeping last $RETENTION_DAYS days)..."
-DELETED_COUNT=0
-while IFS= read -r old_backup; do
-    if [ -n "$old_backup" ]; then
-        log "  Deleting: $(basename "$old_backup")"
-        rm "$old_backup"
-        DELETED_COUNT=$((DELETED_COUNT + 1))
-    fi
-done < <(find "$BACKUP_DIR" -name "${HOSTNAME}-backup-*.tar.gz" -mtime +$RETENTION_DAYS)
-
-if [ $DELETED_COUNT -gt 0 ]; then
-    log "✓ Deleted $DELETED_COUNT old backup(s)"
-else
-    log "  No old backups to delete"
-fi
-
-# Show current backups
-log "Current backups:"
-ls -lh "$BACKUP_DIR"/${HOSTNAME}-backup-*.tar.gz 2>/dev/null | awk '{print "  " $9 " (" $5 ")"}' | tee -a "$LOG_FILE"
-
-log "========================================="
-log "Backup process complete"
-log "========================================="
-
-# Exit successfully
-exit 0
+gzip -t -- "$pending"
+tar -tzf "$pending" >/dev/null
+publish_backup "$pending" backup tar.gz

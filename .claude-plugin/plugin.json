@@ -1,0 +1,18 @@
+{
+    "name": "secure-server-skills",
+    "version": "2.0.0",
+    "description": "Skills for setting up secure servers with best practices",
+    "author": {
+        "name": "Mihir Kumar",
+        "email": "hello@mikr13.com"
+    },
+    "repository": "https://github.com/mikr13/secure-server-setup-skills",
+    "license": "MIT",
+    "skills": [
+        "./secure-server-setup/auto-updates",
+        "./secure-server-setup/ssh-hardening",
+        "./secure-server-setup/firewall-configuration",
+        "./secure-server-setup/fail2ban-setup",
+        "./secure-server-setup/backup-strategy"
+    ]
+}

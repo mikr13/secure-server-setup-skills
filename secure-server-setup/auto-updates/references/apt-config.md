@@ -1,174 +1,63 @@
-# APT Auto-Update Configuration Reference
+# APT automatic-update operations
 
-## Configuration Files
+## Inspect effective policy
 
-### /etc/apt/apt.conf.d/20auto-upgrades
-
-Controls the frequency of automatic updates:
-
+```bash
+sudo apt-config dump
+sudo systemctl cat apt-daily.timer apt-daily-upgrade.timer
+sudo systemctl list-timers apt-daily.timer apt-daily-upgrade.timer --no-pager
+apt-mark showhold
 ```
+
+Read the distribution's installed `50unattended-upgrades` and all later drop-ins. Ubuntu `Allowed-Origins` and Debian `Origins-Pattern` configurations are not interchangeable. Confirm security origins, third-party repositories, Ubuntu Pro/ESM access where applicable, and the actual release's policy. Do not claim that every default origin is security-only.
+
+The setup helper's managed file sets only:
+
+```text
 APT::Periodic::Update-Package-Lists "1";
 APT::Periodic::Unattended-Upgrade "1";
-APT::Periodic::Download-Upgradeable-Packages "1";
-APT::Periodic::AutocleanInterval "7";
 ```
 
-- `Update-Package-Lists` - Update package lists daily (1 = daily, 0 = disabled)
-- `Unattended-Upgrade` - Run unattended-upgrade daily
-- `Download-Upgradeable-Packages` - Pre-download packages
-- `AutocleanInterval` - Remove old packages every N days
+It preserves other files and creates a protected copy of its previous managed file. A later lexicographically loaded override can still win; effective-setting validation detects this instead of declaring success.
 
-### /etc/apt/apt.conf.d/50unattended-upgrades
+## Reboots, cleanup and immediate upgrades
 
-Main configuration file for unattended-upgrades:
+Inspect `Unattended-Upgrade::Automatic-Reboot`, `Automatic-Reboot-WithUsers`, `Automatic-Reboot-Time`, dependency/kernel cleanup, and held packages. Preserve choices unless the authorized maintenance plan changes them. Times are interpreted in the target server's timezone; inspect installed timers and their randomized delays rather than assuming a fixed schedule.
 
-```
-Unattended-Upgrade::Allowed-Origins {
-    "${distro_id}:${distro_codename}";
-    "${distro_id}:${distro_codename}-security";
-    "${distro_id}ESMApps:${distro_codename}-apps-security";
-    "${distro_id}ESM:${distro_codename}-infra-security";
-};
+A manual broad package upgrade is a separate maintenance operation. Preview affected packages and coordinate service restarts, backups and any required reboot. Enabling unattended upgrades does not by itself authorize immediate `apt upgrade -y` or removing package holds.
+
+If intentionally changing reboot policy, use a separate reviewed managed override rather than editing vendor files. For example, an approved no-auto-reboot policy is:
+
+```text
+Unattended-Upgrade::Automatic-Reboot "false";
 ```
 
-## Important Settings
-
-### Automatic Reboots
-
-```
-Unattended-Upgrade::Automatic-Reboot "true";
-Unattended-Upgrade::Automatic-Reboot-WithUsers "false";
-Unattended-Upgrade::Automatic-Reboot-Time "02:00";
-```
-
-- `Automatic-Reboot` - Reboot automatically if required
-- `Automatic-Reboot-WithUsers` - Reboot even if users are logged in
-- `Automatic-Reboot-Time` - Time for automatic reboot (24-hour format)
-
-### Email Notifications
-
-```
-Unattended-Upgrade::Mail "root@localhost";
-Unattended-Upgrade::MailReport "on-change";
-```
-
-Options for `MailReport`:
-
-- `always` - Send email after every run
-- `only-on-error` - Only send on errors
-- `on-change` - Send when packages are upgraded
-
-### Cleanup Options
-
-```
-Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
-Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
-Unattended-Upgrade::Remove-Unused-Dependencies "true";
-Unattended-Upgrade::Automatic-Reboot-WithUsers "false";
-```
-
-### Package Blacklist
-
-Prevent specific packages from auto-updating:
-
-```
-Unattended-Upgrade::Package-Blacklist {
-    "vim";
-    "nginx";
-};
-```
-
-## Monitoring Commands
-
-### Check Service Status
-
-```bash
-systemctl status unattended-upgrades
-```
-
-### View Timer Status
-
-```bash
-systemctl list-timers apt-daily.timer
-systemctl list-timers apt-daily-upgrade.timer
-```
-
-### Check Recent Logs
-
-```bash
-# View unattended-upgrades log
-sudo cat /var/log/unattended-upgrades/unattended-upgrades.log
-
-# View with systemd journal
-sudo journalctl -u unattended-upgrades
-
-# View APT history
-sudo cat /var/log/apt/history.log
-```
-
-### Dry Run Test
+## Verification
 
 ```bash
 sudo unattended-upgrade --dry-run --debug
+sudo journalctl -u apt-daily-upgrade.service -n 50 --no-pager
+sudo tail -n 50 /var/log/unattended-upgrades/unattended-upgrades.log
 ```
 
-## Update Schedule
+Dry-run output should show the expected allowed origins and candidate packages. Confirm periodic settings and functioning timers, then monitor real scheduled outcomes. Service status alone is not proof that updates are occurring.
 
-Default schedule (can be viewed with `systemctl cat apt-daily.timer`):
+## Package-manager locks
 
-- `apt-daily.timer` - Runs around 6:00 AM + random delay
-- `apt-daily-upgrade.timer` - Runs around 6:00 AM + random delay
-
-Random delay prevents all systems from updating simultaneously.
-
-## Security Considerations
-
-1. **Security updates only**: Default configuration only installs security updates
-2. **Test updates**: For production systems, test in staging first
-3. **Monitor logs**: Regularly check for failed updates
-4. **Backup before updates**: Ensure backups are current
-5. **Reboot planning**: Plan for automatic reboots if enabled
-
-## Troubleshooting
-
-### Updates Not Running
-
-1. Check timer status: `systemctl list-timers`
-2. Check service status: `systemctl status unattended-upgrades`
-3. Enable if disabled: `systemctl enable unattended-upgrades`
-4. Check logs: `journalctl -u unattended-upgrades`
-
-### Packages Held Back
+Never remove APT/dpkg lock files to bypass a lock. Identify the holder:
 
 ```bash
-# List held packages
-apt-mark showhold
-
-# Unhold a package
-sudo apt-mark unhold package-name
-
-# Hold a package
-sudo apt-mark hold package-name
+sudo fuser -v /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/lib/apt/lists/lock
 ```
 
-### Lock File Issues
+Wait for an active upgrade. If a process appears stalled, inspect its logs and state and coordinate controlled recovery; do not kill a running package operation solely because the lock exists. After exclusive access is available, recover interrupted package configuration with `sudo dpkg --configure -a`, then diagnose any remaining package errors. Lock files can exist without being held; deleting a file does not release the process's region lock.
 
-If APT is locked:
+## Rollback
 
-```bash
-# Check for running processes
-sudo lsof /var/lib/dpkg/lock-frontend
-sudo lsof /var/lib/apt/lists/lock
+The helper prints `/var/backups/secure-server-setup/apt/rollback.*`. Restore `previous.conf` to the managed path if it existed, otherwise remove only the newly managed drop-in. Inspect/restore timer states and effective policy. Reverting configuration does not undo already-installed packages.
 
-# Remove locks (use with caution)
-sudo rm /var/lib/apt/lists/lock
-sudo rm /var/cache/apt/archives/lock
-sudo rm /var/lib/dpkg/lock-frontend
-sudo dpkg --configure -a
-```
+## Sources
 
-## References
-
-- [Ubuntu Automatic Updates](https://help.ubuntu.com/community/AutomaticSecurityUpdates)
-- [Debian Unattended Upgrades](https://wiki.debian.org/UnattendedUpgrades)
-- [APT Configuration Reference](https://manpages.ubuntu.com/manpages/jammy/man5/apt.conf.5.html)
+- [Ubuntu automatic updates](https://ubuntu.com/server/docs/how-to/software/automatic-updates/)
+- [Debian unattended upgrades](https://wiki.debian.org/UnattendedUpgrades)
+- [Debian dpkg lock FAQ](https://wiki.debian.org/Teams/Dpkg/FAQ)
