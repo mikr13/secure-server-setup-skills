@@ -37,9 +37,17 @@ if $APPLY && $EXPLICIT_DRY_RUN; then backup_die 'Choose --apply or --dry-run, no
 ((${#files[@]})) || backup_die 'Supply explicit --file paths for every required file/database artifact.'
 [[ $s3_uri =~ ^s3://[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]/[^[:space:]]+$ ]] || backup_die 'Use an approved s3://bucket/nonempty-prefix destination.'
 s3_uri=${s3_uri%/}
+destination_keys=()
 for file in "${files[@]}"; do
     [[ -f $file && ! -L $file && $file != *$'\n'* && $file != *$'\r'* ]] || backup_die "Not a regular artifact: $file"
     verify_checksum "$file" || backup_die "Missing/invalid checksum for $file; verify the artifact first."
+    destination="$s3_uri/$(basename -- "$file")"
+    for key in "$destination" "$destination.sha256"; do
+        for previous_key in "${destination_keys[@]}"; do
+            [[ $key != "$previous_key" ]] || backup_die "Duplicate S3 destination: $key; choose distinct artifact names or separate prefixes."
+        done
+        destination_keys+=("$key")
+    done
     printf 'Upload and byte-verify: %s -> %s/%s\n' "$file" "$s3_uri" "$(basename -- "$file")"
 done
 if ! $APPLY; then printf 'Preview only; no AWS requests.\n'; exit 0; fi

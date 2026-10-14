@@ -2,7 +2,7 @@
 
 The five skills share one semantic version. Git tags identify published snapshots; entries marked unreleased describe work being prepared for release.
 
-## 2.0.0 — Unreleased
+## 2.0.0 — 2026-10-14
 
 ### Breaking changes
 
@@ -19,8 +19,15 @@ See [Migrating from v1 to v2](MIGRATING.md) before replacing existing jobs or de
 - Validate effective SSH policy, management listeners and Fail2ban configuration; preserve unrelated active firewall policies, jails and update settings.
 - Restore previous managed configuration on validation or activation failure. Preserve verified backup data when later encryption or transfer fails.
 - Create private, checksummed file/database artifacts with locking, optional GPG encryption and S3 download/readback verification.
-- Add disposable Ubuntu 24.04 and Debian 12 regression coverage. The hardening change passed 33 tests on each distribution; systemd control, firewall state changes and AWS calls are simulated.
+- Add disposable Ubuntu 24.04 and Debian 12 regression coverage. The final suite passes 42 tests on each distribution; systemd control, firewall state changes and AWS calls are simulated.
 - Shorten skill entrypoints, refresh operational references and document platform requirements, migration steps and verification limits.
+
+### Review fixes
+
+- Refuse excluded SSH client source addresses before firewall changes; enabling with an unknown client requires explicit console-recovery confirmation.
+- Check merged Fail2ban action ports and TCP coverage, require approval for packaged all-port actions, and scope active-service reload/recovery to the SSH jail.
+- Reject collisions across all S3 artifact and checksum destination keys before upload.
+- Restore ACLs and extended attributes explicitly; test file contents, permissions, named/default ACLs and user attributes.
 
 ### Versioning
 

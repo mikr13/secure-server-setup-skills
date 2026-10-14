@@ -43,7 +43,9 @@ The helper detects existing auth/secure files, otherwise selects journald. A fil
 
 Use a narrowly scoped file in `jail.d/` and avoid replacing `jail.local`. Later `.local` files can override helper values; inspect effective configuration after all files are loaded. Preserve other jails and `ignoreip` values. If changing the management allowlist, add the exact approved addresses to the existing list; do not automatically trust whole private networks.
 
-Recidive needs real Fail2ban log events and an appropriate backend/log target. Do not enable it merely because the SSH jail exists. Preserve any intentionally configured ban action, notification setup, and log retention policy.
+Recidive needs real Fail2ban log events and an appropriate backend/log target. Do not enable it merely because the SSH jail exists. Preserve any intentionally configured ban action, notification setup, and log retention policy. The helper checks merged action ports and TCP coverage against the selected SSH listeners, including action-local overrides. Packaged iptables/nftables all-port actions require explicit `--allow-allports` approval. Unverifiable custom actions need a reviewed manual procedure; checking action parameters does not prove live enforcement.
+
+When Fail2ban is active, the helper uses `fail2ban-client reload --if-exists sshd` for both activation and recovery. It does not fall back to a global reload or restart. A failed scoped recovery needs a manual service review. Starting an inactive service loads its enabled jails, so inspect and authorize that service-wide startup before `--activate`.
 
 ## Meaningful filter tests
 

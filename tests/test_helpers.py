@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Destructive fixtures: run ONLY in a disposable Linux container, repository mounted read-only."""
-import ast, fcntl, gzip, hashlib, os, pathlib, shutil, signal, subprocess, tempfile, time, unittest
+import ast, fcntl, gzip, hashlib, os, pathlib, shlex, shutil, signal, subprocess, tempfile, time, unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SKILLS = ROOT / 'secure-server-setup'
@@ -421,5 +421,135 @@ esac
     def test_invalid_ssh_client_address_is_refused(self):
         r=helper('ssh-hardening','setup-ssh-hardening.sh','--user','auditor','--client-address','999.999.999.999','--apply','--key-access-confirmed',env=self.env)
         self.assertNotEqual(r.returncode,0);self.assertIn('valid actual client IP',r.stderr)
+
+
+    def test_firewall_excluded_client_is_refused_before_mutation(self):
+        self.listener_mock();self.ufw_mock(active=False)
+        self.env['SSH_CONNECTION']='203.0.113.10 12345 192.0.2.1 2222'
+        rules=pathlib.Path('/etc/ufw/user.rules');before=rules.read_bytes()
+        r=helper('firewall-configuration','setup-firewall.sh','--ssh-port','2222','--ssh-source','198.51.100.0/24','--apply','--enable',env=self.env)
+        self.assertNotEqual(r.returncode,0);self.assertIn('client address',r.stderr)
+        self.assertEqual(rules.read_bytes(),before)
+        self.assertIn('ENABLED=no',pathlib.Path('/etc/ufw/ufw.conf').read_text())
+
+    def test_firewall_allows_matching_ipv4_and_ipv6_sources(self):
+        self.listener_mock()
+        for client,cidr in [('203.0.113.10','203.0.113.0/24'),('2001:db8:1234::10','2001:db8:1234::/64')]:
+            with self.subTest(client=client):
+                self.ufw_mock(active=False)
+                self.env['SSH_CONNECTION']=f'{client} 12345 192.0.2.1 2222'
+                r=helper('firewall-configuration','setup-firewall.sh','--ssh-port','2222','--ssh-source','198.51.100.0/24','--ssh-source',cidr,'--apply','--enable',env=self.env)
+                self.assertEqual(r.returncode,0,r.stderr)
+                self.assertIn('ENABLED=yes',pathlib.Path('/etc/ufw/ufw.conf').read_text())
+
+    def test_firewall_unknown_or_excluded_client_needs_console_confirmation(self):
+        self.listener_mock()
+        for connection in ['', '203.0.113.10 12345 192.0.2.1 2222']:
+            with self.subTest(connection=connection):
+                self.ufw_mock(active=False);self.env['SSH_CONNECTION']=connection
+                args=['--ssh-port','2222','--ssh-source','198.51.100.0/24','--apply','--enable']
+                r=helper('firewall-configuration','setup-firewall.sh',*args,env=self.env)
+                self.assertNotEqual(r.returncode,0)
+                self.assertIn('ENABLED=no',pathlib.Path('/etc/ufw/ufw.conf').read_text())
+                r=helper('firewall-configuration','setup-firewall.sh',*args,'--console-recovery-confirmed',env=self.env)
+                self.assertEqual(r.returncode,0,r.stderr)
+                self.assertIn('ENABLED=yes',pathlib.Path('/etc/ufw/ufw.conf').read_text())
+
+    def test_fail2ban_overridden_action_ports_restore_previous_file(self):
+        self.conventional_ssh();self.listener_mock()
+        managed=pathlib.Path('/etc/fail2ban/jail.d/99-secure-server-sshd.local')
+        later=pathlib.Path('/etc/fail2ban/jail.d/zz-fixture.local')
+        for override in ['port = 22', 'action = iptables-multiport[port=22]']:
+            with self.subTest(override=override):
+                managed.write_text('# previous managed file\n');later.write_text('[sshd]\n'+override+'\n')
+                r=helper('fail2ban-setup','setup-fail2ban.sh','--ssh-port','2222','--apply',env=self.env)
+                self.assertNotEqual(r.returncode,0,r.stderr)
+                self.assertEqual(managed.read_text(),'# previous managed file\n')
+                self.assertIn('ports',r.stderr)
+
+    def test_fail2ban_allports_requires_explicit_approval(self):
+        self.conventional_ssh();self.listener_mock()
+        pathlib.Path('/etc/fail2ban/jail.local').write_text('[sshd]\naction = iptables-allports\n')
+        r=helper('fail2ban-setup','setup-fail2ban.sh','--ssh-port','2222','--apply',env=self.env)
+        self.assertNotEqual(r.returncode,0)
+        r=helper('fail2ban-setup','setup-fail2ban.sh','--ssh-port','2222','--apply','--allow-allports',env=self.env)
+        self.assertEqual(r.returncode,0,r.stderr)
+
+    def test_fail2ban_active_reload_and_recovery_are_scoped(self):
+        self.conventional_ssh();self.listener_mock()
+        managed=pathlib.Path('/etc/fail2ban/jail.d/99-secure-server-sshd.local')
+        calls=self.base/'reload-calls';self.env['RELOAD_CALLS']=str(calls)
+        self.mock('systemctl', '#!/bin/bash\nprintf "systemctl %s\\n" "$*" >> "$RELOAD_CALLS"\n[[ $1 == is-active && ${*: -1} == fail2ban ]]\n')
+        self.mock('fail2ban-client', r'''#!/bin/bash
+case "$1" in
+  reload|status) printf '%s\n' "$*" >> "$RELOAD_CALLS"; [[ -z ${FAIL_F2B_STATUS:-} || $1 != status ]] ;;
+  *) exec /usr/bin/fail2ban-client "$@" ;;
+esac
+''')
+        r=helper('fail2ban-setup','setup-fail2ban.sh','--ssh-port','2222','--apply','--activate',env=self.env)
+        self.assertEqual(r.returncode,0,r.stderr)
+        self.assertIn('reload --if-exists sshd',calls.read_text().splitlines())
+        self.assertNotIn('reload',calls.read_text().splitlines())
+        managed.write_text('# previous managed file\n');calls.write_text('');self.env['FAIL_F2B_STATUS']='1'
+        r=helper('fail2ban-setup','setup-fail2ban.sh','--ssh-port','2222','--apply','--activate',env=self.env)
+        self.assertNotEqual(r.returncode,0)
+        self.assertEqual(managed.read_text(),'# previous managed file\n')
+        self.assertEqual(calls.read_text().splitlines().count('reload --if-exists sshd'),2)
+        self.assertNotIn('reload',calls.read_text().splitlines())
+        self.assertNotIn('systemctl restart fail2ban',calls.read_text().splitlines())
+
+    def test_s3_destination_collisions_are_refused_before_any_upload(self):
+        self.s3_mock()
+        for second_name in ['artifact', 'artifact.sha256']:
+            with self.subTest(second_name=second_name):
+                first_dir=self.base/'first';first_dir.mkdir(exist_ok=True)
+                second_dir=self.base/'second';second_dir.mkdir(exist_ok=True)
+                first=first_dir/'artifact';second=second_dir/second_name
+                for artifact,data in [(first,b'first recovery data'),(second,b'second recovery data')]:
+                    artifact.write_bytes(data)
+                    pathlib.Path(str(artifact)+'.sha256').write_text(hashlib.sha256(data).hexdigest()+'  '+artifact.name+'\n')
+                for mode in ['--dry-run','--apply']:
+                    r=helper('backup-strategy','backup-to-s3.sh','--file',first,'--file',second,'--s3-uri','s3://approved-backups/server-a',mode,env=self.env)
+                    self.assertNotEqual(r.returncode,0);self.assertIn('Duplicate S3 destination',r.stderr)
+                    self.assertFalse((self.base/'remote').exists())
+                    self.assertEqual(first.read_bytes(),b'first recovery data')
+                    self.assertEqual(second.read_bytes(),b'second recovery data')
+
+    def test_documented_restore_preserves_acls_and_xattrs(self):
+        file=self.sources/'important.txt';file.chmod(0o640)
+        self.assertEqual(run(['setfacl','-m','u:2000:rw',file]).returncode,0)
+        self.assertEqual(run(['setfacl','-m','d:u:2000:rx',self.sources]).returncode,0)
+        os.setxattr(file,'user.recovery-note',b'restore this metadata')
+        r=helper('backup-strategy','backup-full.sh',*self.file_args('--apply'),env=self.env)
+        self.assertEqual(r.returncode,0,r.stderr)
+        archive,=self.backups.glob('*.tar.gz');restored=self.base/'metadata-restore';restored.mkdir()
+        doc=(SKILLS/'backup-strategy/references/backup-locations.md').read_text()
+        command=next(line for line in doc.splitlines() if line.startswith('tar ') and ' -xzf ' in line)
+        args=[str(archive) if arg=='FILE_ARCHIVE.tar.gz' else str(restored) if arg=='restore-staging' else arg for arg in shlex.split(command)]
+        r=run(args);self.assertEqual(r.returncode,0,r.stderr)
+        restored_dir=restored/str(self.sources).lstrip('/');copy=restored_dir/file.name
+        self.assertEqual(copy.read_bytes(),file.read_bytes())
+        self.assertEqual(copy.stat().st_mode & 0o777,file.stat().st_mode & 0o777)
+        self.assertEqual(os.getxattr(copy,'user.recovery-note'),os.getxattr(file,'user.recovery-note'))
+        for source,target in [(file,copy),(self.sources,restored_dir)]:
+            self.assertEqual(run(['getfacl','-cpn',source]).stdout,run(['getfacl','-cpn',target]).stdout)
+
+
+    def test_real_fail2ban_scoped_reload_preserves_unrelated_jail(self):
+        self.conventional_ssh();self.listener_mock()
+        config=pathlib.Path('/etc/fail2ban/jail.local')
+        config.write_text('[DEFAULT]\nbackend = polling\nlogpath = /var/log/auth.log\naction = dummy[port="%(port)s", protocol=tcp]\n[secondary]\nenabled = true\nfilter = sshd\nmaxretry = 19\n[sshd]\nenabled = false\n')
+        pathlib.Path('/var/log/auth.log').touch()
+        r=run(['fail2ban-client','-x','start']);self.assertEqual(r.returncode,0,r.stderr)
+        try:
+            self.mock('systemctl','#!/bin/bash\n[[ $1 == is-active && ${*: -1} == fail2ban ]]\n')
+            config.write_text(config.read_text().replace('maxretry = 19','maxretry = 33'))
+            for _ in range(2):  # Newly enabled jail, then existing-jail reload.
+                r=helper('fail2ban-setup','setup-fail2ban.sh','--ssh-port','2222','--apply','--activate',env=self.env)
+                self.assertEqual(r.returncode,0,r.stderr)
+                self.assertEqual(run(['fail2ban-client','get','secondary','maxretry']).stdout.strip(),'19')
+                self.assertEqual(run(['fail2ban-client','get','sshd','maxretry']).stdout.strip(),'5')
+        finally:
+            r=run(['fail2ban-client','stop']);self.assertEqual(r.returncode,0,r.stderr)
 
 if __name__=='__main__':unittest.main(verbosity=2)

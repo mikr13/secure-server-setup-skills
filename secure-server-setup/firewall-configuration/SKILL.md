@@ -38,7 +38,7 @@ Once the rule set and activation are authorized:
 sudo bash scripts/setup-firewall.sh --ssh-source 203.0.113.10/32 --allow-port 443/tcp --apply --enable
 ```
 
-The helper validates ports/sources/listeners, adds management access first, and snapshots UFW configuration for rollback. It stages deny-incoming/allow-outgoing defaults only on inactive UFW. Existing active defaults and rules are preserved; review unwanted broad allows separately. Without `--enable`, an inactive firewall remains inactive. Public service flags deliberately allow any source; use manual source-restricted rules for internal databases/services.
+The helper validates ports/sources/listeners and checks the current SSH client against the proposed source CIDRs before changing rules. If that client is excluded, or its address is unavailable when enabling inactive UFW, it refuses the operation unless `--console-recovery-confirmed` explicitly attests tested out-of-band recovery. Preserve `SSH_CONNECTION` through privilege escalation where appropriate; never add the override merely to bypass a failed access check. It adds management access first and snapshots UFW configuration for rollback. It stages deny-incoming/allow-outgoing defaults only on inactive UFW. Existing active defaults and rules are preserved; review unwanted broad allows separately. Without `--enable`, an inactive firewall remains inactive. Public service flags deliberately allow any source; use manual source-restricted rules for internal databases/services.
 
 ## Verify and recover
 

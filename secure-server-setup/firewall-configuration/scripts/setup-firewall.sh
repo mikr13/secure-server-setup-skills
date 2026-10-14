@@ -6,6 +6,7 @@ apply=false
 explicit_dry_run=false
 enable=false
 public_ssh=false
+console_recovery_confirmed=false
 ssh_ports=()
 ssh_sources=()
 allow_ports=()
@@ -16,6 +17,7 @@ Preview by default; inspect provider/container firewalls separately.
   --ssh-port PORT    Repeat for actual management listeners; otherwise use sshd -T
   --ssh-source CIDR  Repeat for approved management IPv4/IPv6 sources
   --public-ssh       Explicitly permit SSH from any source
+  --console-recovery-confirmed  Attest tested console recovery if client is unknown/excluded
   --allow-port N/tcp or N/udp  Repeat for public services that need access
   --apply           Add rules; root required
   --enable          Activate an inactive UFW after adding rules (--apply required)
@@ -34,6 +36,7 @@ while (($#)); do
         --ssh-source) (($# >= 2)) || die '--ssh-source needs a value'; ssh_sources+=("$2"); shift 2 ;;
         --allow-port) (($# >= 2)) || die '--allow-port needs a value'; [[ $2 =~ ^([0-9]{1,5})/(tcp|udp)$ ]] || die 'Use --allow-port N/tcp or N/udp.'; valid_port "${BASH_REMATCH[1]}" || die 'Port must be 1-65535.'; allow_ports+=("$2"); shift 2 ;;
         --public-ssh) public_ssh=true; shift ;;
+        --console-recovery-confirmed) console_recovery_confirmed=true; shift ;;
         --apply) apply=true; shift ;;
         --enable) enable=true; shift ;;
         --dry-run) explicit_dry_run=true; shift ;;
@@ -64,14 +67,26 @@ for port in "${ssh_ports[@]}"; do
     grep -qxF "$port" <<< "$listener_ports" || die "No TCP listener on SSH port $port; inspect actual management access."
 done
 if [[ -n ${SSH_CONNECTION:-} ]]; then
-    read -r _ _ _ current_port <<< "$SSH_CONNECTION"
+    read -r current_client _ _ current_port <<< "$SSH_CONNECTION"
     found=false
     for port in "${ssh_ports[@]}"; do if [[ $port == "$current_port" ]]; then found=true; fi; done
     $found || die 'The active SSH connection port is missing from the proposed allow rules.'
+    python3 -c 'import ipaddress,sys; ipaddress.ip_address(sys.argv[1])' "$current_client" >/dev/null 2>&1 || die 'Invalid current SSH client address.'
+    if ! $public_ssh && ! python3 -c '
+import ipaddress,sys
+client = ipaddress.ip_address(sys.argv[1])
+sys.exit(0 if any(client in ipaddress.ip_network(cidr, strict=False) for cidr in sys.argv[2:]) else 1)
+' "$current_client" "${ssh_sources[@]}"; then
+        $console_recovery_confirmed || die 'Current SSH client address is excluded; review CIDRs or attest tested console recovery with --console-recovery-confirmed.'
+        printf 'WARNING: current SSH client address is excluded; console recovery explicitly confirmed.\n' >&2
+    fi
 fi
 status=$(ufw status verbose)
 was_active=false
 if grep -q '^Status: active' <<< "$status"; then was_active=true; fi
+if $enable && ! $was_active && [[ -z ${SSH_CONNECTION:-} ]]; then
+    $console_recovery_confirmed || die 'Current SSH client address is unknown; preserve SSH_CONNECTION or attest tested console recovery with --console-recovery-confirmed.'
+fi
 printf '%s\nSSH listeners: %s\nPublic service ports: %s\n' "$status" "${ssh_ports[*]}" "${allow_ports[*]:-none}"
 if $public_ssh; then printf 'SSH sources: any (explicitly requested)\n'; else printf 'SSH sources: %s\n' "${ssh_sources[*]}"; fi
 if $was_active; then printf 'Existing defaults and rules will be preserved; audit broad allows separately.\n'

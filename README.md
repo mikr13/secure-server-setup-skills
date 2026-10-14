@@ -175,7 +175,7 @@ Each skill directory contains `SKILL.md`, `scripts/`, and `references/`. Read th
 
 ## Validation
 
-The regression suite exercises Ubuntu 24.04 and Debian 12 containers. It covers real SSH key login after policy activation, MariaDB dump/restore, GPG encrypt/decrypt/restore, failure preservation, configuration rollback, port discovery, and opt-in retention. AWS calls, firewall state changes and systemd control are simulated; UFW rule syntax and Fail2ban's merged configuration use the installed tools. It does not prove live provider networking, systemd activation, ban enforcement or AWS permissions.
+The regression suite exercises Ubuntu 24.04 and Debian 12 containers. Its 42 tests cover real SSH key login after policy activation, MariaDB dump/restore, GPG encrypt/decrypt/restore, ACL/xattr restoration, failure preservation, configuration rollback, port/source checks, Fail2ban action ports and scoped reload/recovery, S3 key collisions, and opt-in retention. AWS calls, firewall state changes and systemd control are simulated; UFW rule syntax and Fail2ban's merged configuration use the installed tools. Scoped Fail2ban reload also runs against a real daemon with dummy ban actions and verifies that unrelated pending jail settings stay inactive. It does not prove live provider networking, systemd activation, ban enforcement or AWS permissions.
 
 Run only in a disposable container with the repository mounted read-only. The suite refuses a normal host invocation because its fixtures modify container `/etc`:
 

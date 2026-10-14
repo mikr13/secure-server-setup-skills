@@ -43,7 +43,7 @@ Do not update `current` after failed rsync, or use an unquoted `ls | xargs rm -r
 
 ## Transfer both files and databases
 
-Supply every required artifact explicitly to the S3 helper with repeated `--file` flags. It verifies local checksums first, uploads the artifact using the requested encryption policy, downloads it for a hash comparison, then uploads its checksum. It never removes local copies or sets lifecycle policies. Restore by retrieving both the artifact and manifest and verifying the bytes before extraction/import.
+Supply every required artifact explicitly to the S3 helper with repeated `--file` flags. All artifact and checksum destination keys must be unique within the invocation; duplicate basenames or an artifact name matching another artifact's `.sha256` key are refused before any AWS request. Use distinct names or separate destination prefixes. It verifies local checksums first, uploads the artifact using the requested encryption policy, downloads it for a hash comparison, then uploads its checksum. It never removes local copies or sets lifecycle policies. Restore by retrieving both the artifact and manifest and verifying the bytes before extraction/import.
 
 An upload can succeed but readback/checksum verification can fail; report that generation as unverified and keep useful local and prior remote copies. Scope credentials to the approved prefix and operations. Use provider roles/scoped credentials where available. Configure versioning/retention/immutability and deletion permissions separately so a compromised server cannot remove every generation.
 
@@ -67,10 +67,10 @@ Inspect and verify a downloaded file archive before extracting it:
 sha256sum --check FILE_ARCHIVE.sha256
 mkdir -m 700 restore-staging
 tar -tzf FILE_ARCHIVE.tar.gz
-tar -xzf FILE_ARCHIVE.tar.gz -C restore-staging
+tar --acls --xattrs -xzf FILE_ARCHIVE.tar.gz -C restore-staging
 ```
 
-Substitute actual generated filenames. For encrypted artifacts, verify the ciphertext checksum, decrypt using the separately held private key into protected staging, then inspect/extract. Treat archives as sensitive and trusted input; restore in a disposable environment as an unprivileged user where possible. Never use an unreviewed archive to overwrite `/` on a live server.
+Substitute actual generated filenames. Compare restored permissions, named/default ACLs and required extended attributes with the source. GNU tar restores user-namespace extended attributes with `--xattrs`; restore other namespaces only after checking target compatibility and security policy. Ownership restoration can require a privileged isolated restore; confirm numeric user/group mappings first. For encrypted artifacts, verify the ciphertext checksum, decrypt using the separately held private key into protected staging, then inspect/extract. Treat archives as sensitive and trusted input; restore in a disposable environment as an unprivileged user where possible. Never use an unreviewed archive to overwrite `/` on a live server.
 
 For database restore, validate decompression first and import into an isolated test instance with appropriate credentials. The dump includes selected database definitions, routines/triggers/events; review names and scheduled events before importing. Verify representative records, required schema, permissions, metadata and application operations, not just gzip integrity. Document the result and measured restore time.
 

@@ -39,6 +39,8 @@ The helper writes only `jail.d/99-secure-server-sshd.local`, selects file pollin
 
 Do not enable recidive or application jails unless their actual log source, filter and ban action are verified. Aggressive SSH behavior is an installed `sshd` filter mode, not a presumed `sshd-aggressive.conf` file.
 
+The helper validates merged ban-action ports and TCP coverage. Installed iptables/nftables all-port actions require explicit `--allow-allports` approval; custom actions that cannot be verified need a manual procedure. Active-service reload and recovery select only `sshd`. Starting an inactive service loads all enabled jails and must be reviewed accordingly.
+
 ## Verify and recover
 
 - Run `sudo fail2ban-client -t` and check `sudo fail2ban-client status sshd` after activation.
